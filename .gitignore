@@ -1,0 +1,7 @@
+# ignore large data files and cached items
+__pycache__/
+data/
+cliff-finder/
+*.png
+*.gif
+*.log

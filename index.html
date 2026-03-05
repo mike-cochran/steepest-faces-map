@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Karakoram Steepest Faces</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+
+        .maplibregl-popup {
+            max-width: 320px !important;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-size: 14px;
+            z-index: 10;
+        }
+
+        .maplibregl-popup-content {
+            background: rgba(0, 0, 0, 0.85) !important;
+            color: #ffffff !important;
+            padding: 15px !important;
+            border-radius: 8px !important;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4) !important;
+        }
+
+        /* Style the popup tip according to position */
+        .maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+            border-top-color: rgba(0, 0, 0, 0.85);
+        }
+
+        .maplibregl-popup-anchor-top .maplibregl-popup-tip {
+            border-bottom-color: rgba(0, 0, 0, 0.85);
+        }
+
+        .maplibregl-popup-anchor-left .maplibregl-popup-tip {
+            border-right-color: rgba(0, 0, 0, 0.85);
+        }
+
+        .maplibregl-popup-anchor-right .maplibregl-popup-tip {
+            border-left-color: rgba(0, 0, 0, 0.85);
+        }
+
+        .maplibregl-popup-content h3 {
+            margin: 0 0 10px 0 !important;
+            color: #f1c40f !important;
+            border-bottom: 1px solid #555 !important;
+            padding-bottom: 6px !important;
+            font-weight: 600 !important;
+        }
+
+        .maplibregl-popup-content p {
+            margin: 6px 0 !important;
+            font-size: 13px !important;
+            color: #ffffff !important;
+        }
+
+        .highlight {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+
+        .hint {
+            margin-top: 12px !important;
+            font-size: 11px !important;
+            color: #aaa;
+            font-style: italic;
+            border-top: 1px dashed #555;
+            padding-top: 6px;
+        }
+
+        .legend {
+            position: absolute;
+            bottom: 30px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 6px;
+            font-family: sans-serif;
+            font-size: 12px;
+            z-index: 5;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .legend div {
+            display: flex;
+            align-items: center;
+            margin: 4px 0;
+        }
+
+        .color-box {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            border: 1px solid white;
+        }
+    </style>
+    <!-- MapLibre -->
+    <script src="https://unpkg.com/maplibre-gl@3.3.1/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@3.3.1/dist/maplibre-gl.css" rel="stylesheet" />
+
+    <!-- PapaParse for CSV reading -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+</head>
+
+<body>
+    <div id="map"></div>
+    <div class="legend">
+        <strong>Total Face Height</strong>
+        <div><span class="color-box" style="background: #e74c3c"></span> Massive (> 3000m)</div>
+        <div><span class="color-box" style="background: #e67e22"></span> Epic (> 2500m)</div>
+        <div><span class="color-box" style="background: #f1c40f"></span> Huge (≤ 2500m)</div>
+        <div style="margin-top: 8px; font-size: 10px; color: #aaa; border-top: 1px solid #444; padding-top: 4px;">
+            Showing faces > 55° avg gradient</div>
+    </div>
+
+    <script>
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: {
+                version: 8,
+                sources: {
+                    'google-terrain': {
+                        type: 'raster',
+                        tiles: [
+                            'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}'
+                        ],
+                        tileSize: 256,
+                        attribution: 'Map data © Google'
+                    }
+                },
+                layers: [
+                    {
+                        id: 'google-terrain-layer',
+                        type: 'raster',
+                        source: 'google-terrain',
+                        minzoom: 0,
+                        maxzoom: 22
+                    }
+                ]
+            },
+            center: [75.5, 35.8],
+            zoom: 6.5,
+            pitch: 0,
+            bearing: 0
+        });
+
+        // Add standard navigation controls
+        map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+        map.on('load', () => {
+            // Load and parse CSV Data
+            Papa.parse('karakoram_steepest_faces.csv', {
+                download: true,
+                header: true,
+                dynamicTyping: true,
+                complete: function (results) {
+                    // Filter: only show extremely steep faces (gradient > 1.428, which is ~55 degrees).
+                    // Note: max gradient in data is ~66° (gradient 2.22). 70° (gradient 2.74) would show no faces.
+                    const data = results.data.filter(d => d.peak && d.latitude && d.longitude && d.gradient > 1.428);
+
+                    const features = data.map(d => ({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'Point',
+                            coordinates: [d.longitude, d.latitude]
+                        },
+                        properties: d
+                    }));
+
+                    map.addSource('faces', {
+                        type: 'geojson',
+                        data: {
+                            type: 'FeatureCollection',
+                            features: features
+                        }
+                    });
+
+                    // Add markers representing steepest faces
+                    map.addLayer({
+                        id: 'faces-layer-halo',
+                        type: 'circle',
+                        source: 'faces',
+                        paint: {
+                            'circle-radius': [
+                                'interpolate', ['linear'], ['get', 'total_face_height'],
+                                1500, 7,
+                                4000, 15
+                            ],
+                            'circle-color': [
+                                'case',
+                                ['>', ['get', 'total_face_height'], 3000], '#e74c3c', // Red (Massive)
+                                ['>', ['get', 'total_face_height'], 2500], '#e67e22', // Orange (Epic)
+                                '#f1c40f' // Yellow (Huge)
+                            ],
+                            'circle-opacity': 0.3
+                        }
+                    });
+
+                    map.addLayer({
+                        id: 'faces-layer',
+                        type: 'circle',
+                        source: 'faces',
+                        paint: {
+                            'circle-radius': [
+                                'interpolate', ['linear'], ['get', 'total_face_height'],
+                                1500, 4,
+                                4000, 8
+                            ],
+                            'circle-color': [
+                                'case',
+                                ['>', ['get', 'total_face_height'], 3000], '#e74c3c',
+                                ['>', ['get', 'total_face_height'], 2500], '#e67e22',
+                                '#f1c40f'
+                            ],
+                            'circle-stroke-width': 1.5,
+                            'circle-stroke-color': '#ffffff',
+                            'circle-opacity': 1.0
+                        }
+                    });
+
+                    // Tooltip Popup Configuration
+                    const popup = new maplibregl.Popup({
+                        closeButton: false,
+                        closeOnClick: false,
+                        offset: [0, -5]
+                    });
+
+                    map.on('mouseenter', 'faces-layer', (e) => {
+                        map.getCanvas().style.cursor = 'pointer';
+
+                        const feature = e.features[0];
+                        const coordinates = feature.geometry.coordinates.slice();
+                        const obj = feature.properties;
+
+                        // Ensure proper positioning on wrap-around
+                        while (Math.abs(e.lngLat.lng - coordinates[0]) > 180) {
+                            coordinates[0] += e.lngLat.lng > coordinates[0] ? 360 : -360;
+                        }
+
+                        const description = `
+                            <h3>#${obj.rank} ${obj.peak} (${obj.direction} Face)</h3>
+                            <p><strong>Total Face Height:</strong> <span class="highlight">~${Math.round(obj.total_face_height)}m</span></p>
+                            <p><strong>Average Gradient:</strong> <span class="highlight">${obj.gradient.toFixed(2)}</span></p>
+                            <p><strong>Summit Elevation:</strong> ~${Math.round(obj.summit_elev)}m</p>
+                            <p><strong>Steepest 2km Drop:</strong> ${Math.round(obj.drop)}m over ${Math.round(obj.horizontal_dist)}m</p>
+                            <p class="hint">Click marker to open Google Maps view</p>
+                        `;
+
+                        popup.setLngLat(coordinates)
+                            .setHTML(description)
+                            .addTo(map);
+                    });
+
+                    map.on('mouseleave', 'faces-layer', () => {
+                        map.getCanvas().style.cursor = '';
+                        popup.remove();
+                    });
+
+                    // Trigger click to open Google Maps
+                    map.on('click', 'faces-layer', (e) => {
+                        const obj = e.features[0].properties;
+                        const url = `https://www.google.com/maps/@${obj.latitude},${obj.longitude},8000m/data=!3m1!1e3?entry=ttu`;
+                        window.open(url, '_blank');
+                    });
+                }
+            });
+        });
+    </script>
+</body>
+
+</html>
