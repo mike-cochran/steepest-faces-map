@@ -51,7 +51,8 @@ def analyze_radial_profiles(src, arr, peak_name, start_lon, start_lat, num_direc
         return []
 
     start_elev = arr[start_row, start_col]
-    print(f"Analyzing {peak_name} (Elevation at pixel: {start_elev:.0f}m)")
+    safe_name = peak_name.encode('ascii', 'replace').decode('ascii')
+    print(f"Analyzing {safe_name} (Elevation at pixel: {start_elev:.0f}m)")
     
     lat_rad = np.radians(start_lat)
     m_per_deg_lat = 111132.0
@@ -104,9 +105,13 @@ def analyze_radial_profiles(src, arr, peak_name, start_lon, start_lat, num_direc
         
         direction_name = f"{angle_deg:.0f} deg"
         if angle_deg == 0: direction_name = "N"
+        elif angle_deg == 45: direction_name = "NE"
         elif angle_deg == 90: direction_name = "E"
+        elif angle_deg == 135: direction_name = "SE"
         elif angle_deg == 180: direction_name = "S"
+        elif angle_deg == 225: direction_name = "SW"
         elif angle_deg == 270: direction_name = "W"
+        elif angle_deg == 315: direction_name = "NW"
         
         if best_segment:
             start_d, end_d, start_e, end_e, total_drop = best_segment
@@ -203,8 +208,26 @@ def main():
     node["natural"="peak"]({SEARCH_BBOX[1]},{SEARCH_BBOX[0]},{SEARCH_BBOX[3]},{SEARCH_BBOX[2]});
     out body;
     """
-    response = requests.post(overpass_url, data={'data': overpass_query})
-    data = response.json()
+    MAX_RETRIES = 3
+    data = {}
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = requests.post(overpass_url, data={'data': overpass_query}, timeout=60)
+            response.raise_for_status() # Raise error for bad status codes
+            data = response.json()
+            break # Success, exit retry loop
+        except (requests.exceptions.RequestException, requests.exceptions.JSONDecodeError) as e:
+            print(f"Warning: Overpass API request failed (Attempt {attempt+1}/{MAX_RETRIES}): {e}")
+            if attempt < MAX_RETRIES - 1:
+                time_to_wait = 5 * (attempt + 1)
+                print(f"Retrying in {time_to_wait} seconds...")
+                import time
+                time.sleep(time_to_wait)
+            else:
+                print("Error: Failed to fetch peaks from Overpass API after multiple attempts.")
+                print(f"Raw response text (if any):\n{getattr(e, 'response', None) and e.response.text[:200]}")
+                # We can either return early or continue with an empty data dict (meaning no peaks found)
+                data = {}
     
     raw_peaks = []
     for element in data.get('elements', []):
