@@ -11,7 +11,8 @@ from rasterio.merge import merge
 
 # --- CONFIGURATION PARAMETERS ---
 SEARCH_BBOX = [73.5, 35.0, 77.5, 36.5]   # Bounding box for region [lon_min, lat_min, lon_max, lat_max]
-MIN_PEAK_ELEVATION_M = 6000              # Minimum elevation of peaks to fetch from OpenStreetMap
+MIN_PEAK_ELEVATION_M = 6000              # Minimum elevation of peaks to fetch
+GEONAMES_USERNAME = 'mjcochran16'        # GeoNames API username (free account at geonames.org)
 NUM_DIRECTIONS = 8                       # Number of radial directions to check per peak (e.g. 8 = 45 deg apart)
 MAX_RADIUS_KM = 20                       # Maximum horizontal radial distance to search for a drop (km)
 MIN_DROP_M = 2000                        # Minimum required vertical drop elevation (meters)
@@ -199,48 +200,59 @@ def main():
     elif len(dem_files) == 1:
         merged_path = dem_files[0]
         
-    # Fetch peaks dynamically via Overpass API
-    print(f"Fetching peaks >{MIN_PEAK_ELEVATION_M}m from OpenStreetMap via Overpass API...")
-    overpass_url = "http://overpass-api.de/api/interpreter"
-    # bbox in overpass is [lat_min, lon_min, lat_max, lon_max]
-    overpass_query = f"""
-    [out:json][timeout:60];
-    node["natural"="peak"]({SEARCH_BBOX[1]},{SEARCH_BBOX[0]},{SEARCH_BBOX[3]},{SEARCH_BBOX[2]});
-    out body;
-    """
-    MAX_RETRIES = 3
-    data = {}
-    for attempt in range(MAX_RETRIES):
-        try:
-            response = requests.post(overpass_url, data={'data': overpass_query}, timeout=60)
-            response.raise_for_status() # Raise error for bad status codes
-            data = response.json()
-            break # Success, exit retry loop
-        except (requests.exceptions.RequestException, requests.exceptions.JSONDecodeError) as e:
-            print(f"Warning: Overpass API request failed (Attempt {attempt+1}/{MAX_RETRIES}): {e}")
-            if attempt < MAX_RETRIES - 1:
-                time_to_wait = 5 * (attempt + 1)
-                print(f"Retrying in {time_to_wait} seconds...")
-                import time
-                time.sleep(time_to_wait)
-            else:
-                print("Error: Failed to fetch peaks from Overpass API after multiple attempts.")
-                print(f"Raw response text (if any):\n{getattr(e, 'response', None) and e.response.text[:200]}")
-                # We can either return early or continue with an empty data dict (meaning no peaks found)
-                data = {}
-    
+    # Fetch peaks dynamically via GeoNames API
+    print(f"Fetching peaks >{MIN_PEAK_ELEVATION_M}m from GeoNames database...")
     raw_peaks = []
-    for element in data.get('elements', []):
-        tags = element.get('tags', {})
-        ele_str = tags.get('ele', '')
-        if ele_str:
+    
+    geonames_base_url = "http://api.geonames.org/searchJSON"
+    feature_codes = ['PK', 'MT']  # PK = peak, MT = mountain
+    
+    for fc in feature_codes:
+        start_row = 0
+        max_rows = 1000
+        while True:
+            params = {
+                'featureCode': fc,
+                'north': SEARCH_BBOX[3],
+                'south': SEARCH_BBOX[1],
+                'east': SEARCH_BBOX[2],
+                'west': SEARCH_BBOX[0],
+                'maxRows': max_rows,
+                'startRow': start_row,
+                'username': GEONAMES_USERNAME,
+                'style': 'FULL'
+            }
+            
             try:
-                ele_val = float(''.join(c for c in ele_str if c.isdigit() or c == '.'))
-                if ele_val >= MIN_PEAK_ELEVATION_M:
-                    name = tags.get('name', tags.get('name:en', 'Unnamed Peak'))
-                    raw_peaks.append({'name': name, 'lon': element['lon'], 'lat': element['lat'], 'ele': ele_val})
-            except ValueError:
-                pass
+                response = requests.get(geonames_base_url, params=params, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+            except Exception as e:
+                print(f"Warning: GeoNames API request failed for featureCode={fc}, startRow={start_row}: {e}")
+                break
+            
+            geonames_results = data.get('geonames', [])
+            if not geonames_results:
+                break
+                
+            for entry in geonames_results:
+                try:
+                    ele_val = float(entry.get('elevation', 0) or entry.get('srtm3', 0) or 0)
+                    if ele_val >= MIN_PEAK_ELEVATION_M:
+                        name = entry.get('name', 'Unnamed Peak')
+                        lat = float(entry.get('lat', 0))
+                        lon = float(entry.get('lng', 0))
+                        raw_peaks.append({'name': name, 'lon': lon, 'lat': lat, 'ele': ele_val})
+                except (ValueError, TypeError):
+                    pass
+            
+            # Check if there are more results to paginate through
+            total_results = data.get('totalResultsCount', 0)
+            start_row += max_rows
+            if start_row >= total_results:
+                break
+    
+    print(f"Found {len(raw_peaks)} peaks >{MIN_PEAK_ELEVATION_M}m from GeoNames.")
                 
     raw_peaks.sort(key=lambda x: x['ele'], reverse=True)
     
