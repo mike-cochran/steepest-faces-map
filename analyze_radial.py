@@ -200,12 +200,16 @@ def main():
     elif len(dem_files) == 1:
         merged_path = dem_files[0]
         
-    # Fetch peaks dynamically via GeoNames API
-    print(f"Fetching peaks >{MIN_PEAK_ELEVATION_M}m from GeoNames database...")
+    # ========================================================
+    # Fetch peaks from MULTIPLE sources for best coverage
+    # ========================================================
     raw_peaks = []
     
+    # --- Source 1: GeoNames API ---
+    print(f"[Source 1/2] Fetching peaks >{MIN_PEAK_ELEVATION_M}m from GeoNames...")
     geonames_base_url = "http://api.geonames.org/searchJSON"
     feature_codes = ['PK', 'MT']  # PK = peak, MT = mountain
+    geonames_count = 0
     
     for fc in feature_codes:
         start_row = 0
@@ -228,7 +232,7 @@ def main():
                 response.raise_for_status()
                 data = response.json()
             except Exception as e:
-                print(f"Warning: GeoNames API request failed for featureCode={fc}, startRow={start_row}: {e}")
+                print(f"  Warning: GeoNames request failed for featureCode={fc}: {e}")
                 break
             
             geonames_results = data.get('geonames', [])
@@ -242,17 +246,50 @@ def main():
                         name = entry.get('name', 'Unnamed Peak')
                         lat = float(entry.get('lat', 0))
                         lon = float(entry.get('lng', 0))
-                        raw_peaks.append({'name': name, 'lon': lon, 'lat': lat, 'ele': ele_val})
+                        raw_peaks.append({'name': name, 'lon': lon, 'lat': lat, 'ele': ele_val, 'source': 'geonames'})
+                        geonames_count += 1
                 except (ValueError, TypeError):
                     pass
             
-            # Check if there are more results to paginate through
             total_results = data.get('totalResultsCount', 0)
             start_row += max_rows
             if start_row >= total_results:
                 break
     
-    print(f"Found {len(raw_peaks)} peaks >{MIN_PEAK_ELEVATION_M}m from GeoNames.")
+    print(f"  GeoNames: found {geonames_count} peaks >{MIN_PEAK_ELEVATION_M}m")
+    
+    # --- Source 2: OpenStreetMap Overpass API ---
+    print(f"[Source 2/2] Fetching peaks >{MIN_PEAK_ELEVATION_M}m from OpenStreetMap...")
+    overpass_url = "http://overpass-api.de/api/interpreter"
+    overpass_query = f"""
+    [out:json][timeout:60];
+    node["natural"="peak"]({SEARCH_BBOX[1]},{SEARCH_BBOX[0]},{SEARCH_BBOX[3]},{SEARCH_BBOX[2]});
+    out body;
+    """
+    osm_count = 0
+    try:
+        response = requests.post(overpass_url, data={'data': overpass_query}, timeout=60)
+        response.raise_for_status()
+        osm_data = response.json()
+        
+        for element in osm_data.get('elements', []):
+            tags = element.get('tags', {})
+            ele_str = tags.get('ele', '')
+            if ele_str:
+                try:
+                    ele_val = float(''.join(c for c in ele_str if c.isdigit() or c == '.'))
+                    if ele_val >= MIN_PEAK_ELEVATION_M:
+                        name = tags.get('name', tags.get('name:en', 'Unnamed Peak'))
+                        raw_peaks.append({'name': name, 'lon': element['lon'], 'lat': element['lat'], 'ele': ele_val, 'source': 'osm'})
+                        osm_count += 1
+                except ValueError:
+                    pass
+    except Exception as e:
+        print(f"  Warning: OSM Overpass request failed: {e}")
+        print(f"  Continuing with GeoNames data only.")
+    
+    print(f"  OSM: found {osm_count} peaks >{MIN_PEAK_ELEVATION_M}m")
+    print(f"  Combined raw total: {len(raw_peaks)} peaks (before dedup)")
                 
     raw_peaks.sort(key=lambda x: x['ele'], reverse=True)
     
