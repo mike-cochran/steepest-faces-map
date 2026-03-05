@@ -117,9 +117,9 @@
     <div id="map"></div>
     <div class="legend">
         <strong>Rank (Steepest)</strong>
-        <div><span class="color-box" style="background: #ff3366"></span> Top 10</div>
-        <div><span class="color-box" style="background: #ff9933"></span> Top 25</div>
-        <div><span class="color-box" style="background: #00e6e6"></span> Top 50</div>
+        <div><span class="color-box" style="background: #e74c3c"></span> Top 10</div>
+        <div><span class="color-box" style="background: #e67e22"></span> Top 25</div>
+        <div><span class="color-box" style="background: #f1c40f"></span> Top 50</div>
         <div style="margin-top: 8px; font-size: 10px; color: #aaa; border-top: 1px solid #444; padding-top: 4px;">
             Showing top 50 steepest faces</div>
     </div>
@@ -185,6 +185,13 @@
                         }
                     });
 
+                    // Tooltip Popup Configuration
+                    const popup = new maplibregl.Popup({
+                        closeButton: true, // Allow closing on mobile
+                        closeOnClick: true,
+                        offset: [0, -5]
+                    });
+
                     // Add markers representing steepest faces
                     map.addLayer({
                         id: 'faces-layer-halo',
@@ -193,14 +200,14 @@
                         paint: {
                             'circle-radius': [
                                 'interpolate', ['linear'], ['get', 'total_face_height'],
-                                1500, 7,
-                                4000, 15
+                                1500, 10,
+                                4000, 20
                             ],
                             'circle-color': [
                                 'case',
-                                ['<=', ['get', 'rank'], 10], '#ff3366', // Pinkish-Red (Top 10)
-                                ['<=', ['get', 'rank'], 25], '#ff9933', // Bright Orange (Top 25)
-                                '#00e6e6' // Vibrant Cyan (Top 50)
+                                ['<=', ['get', 'rank'], 10], '#ff3366', // Red (Top 10)
+                                ['<=', ['get', 'rank'], 25], '#e67e22', // Orange (Top 25)
+                                '#f1c40f' // Yellow (Top 50)
                             ],
                             'circle-opacity': 0.3
                         }
@@ -213,26 +220,19 @@
                         paint: {
                             'circle-radius': [
                                 'interpolate', ['linear'], ['get', 'total_face_height'],
-                                1500, 4,
-                                4000, 8
+                                1500, 6,
+                                4000, 12
                             ],
                             'circle-color': [
                                 'case',
                                 ['<=', ['get', 'rank'], 10], '#ff3366',
-                                ['<=', ['get', 'rank'], 25], '#ff9933',
-                                '#00e6e6'
+                                ['<=', ['get', 'rank'], 25], '#e67e22',
+                                '#f1c40f'
                             ],
                             'circle-stroke-width': 1.5,
                             'circle-stroke-color': '#ffffff',
                             'circle-opacity': 1.0
                         }
-                    });
-
-                    // Tooltip Popup Configuration
-                    const popup = new maplibregl.Popup({
-                        closeButton: false,
-                        closeOnClick: false,
-                        offset: [0, -5]
                     });
 
                     map.on('mouseenter', 'faces-layer', (e) => {
@@ -247,13 +247,15 @@
                             coordinates[0] += e.lngLat.lng > coordinates[0] ? 360 : -360;
                         }
 
+                        const mapsUrl = `https://www.google.com/maps/@${obj.latitude},${obj.longitude},8000m/data=!3m1!1e3?entry=ttu`;
+
                         const description = `
                             <h3>#${obj.rank} ${obj.peak} (${obj.direction} Face)</h3>
                             <p><strong>Total Face Height:</strong> <span class="highlight">~${Math.round(obj.total_face_height)}m</span></p>
                             <p><strong>Average Gradient:</strong> <span class="highlight">${obj.gradient.toFixed(2)}</span></p>
                             <p><strong>Summit Elevation:</strong> ~${Math.round(obj.summit_elev)}m</p>
                             <p><strong>Steepest 2km Drop:</strong> ${Math.round(obj.drop)}m over ${Math.round(obj.horizontal_dist)}m</p>
-                            <p class="hint">Click marker to open Google Maps view</p>
+                            <p style="margin-top: 10px !important;"><a href="${mapsUrl}" target="_blank" style="color: #66b3ff; text-decoration: none; font-weight: bold; font-size: 14px;">🌎 Open in Google Maps</a></p>
                         `;
 
                         popup.setLngLat(coordinates)
@@ -263,14 +265,7 @@
 
                     map.on('mouseleave', 'faces-layer', () => {
                         map.getCanvas().style.cursor = '';
-                        popup.remove();
-                    });
-
-                    // Trigger click to open Google Maps
-                    map.on('click', 'faces-layer', (e) => {
-                        const obj = e.features[0].properties;
-                        const url = `https://www.google.com/maps/@${obj.latitude},${obj.longitude},8000m/data=!3m1!1e3?entry=ttu`;
-                        window.open(url, '_blank');
+                        // Do not automatically remove the popup so mobile users can tap the link!
                     });
                 }
             });
