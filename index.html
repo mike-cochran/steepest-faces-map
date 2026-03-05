@@ -235,7 +235,7 @@
                         }
                     });
 
-                    map.on('mouseenter', 'faces-layer', (e) => {
+                    function showPopup(e) {
                         map.getCanvas().style.cursor = 'pointer';
 
                         const feature = e.features[0];
@@ -261,11 +261,16 @@
                         popup.setLngLat(coordinates)
                             .setHTML(description)
                             .addTo(map);
-                    });
+                    }
+
+                    // Desktop: show popup on hover
+                    map.on('mouseenter', 'faces-layer', showPopup);
+
+                    // Mobile: show popup on tap
+                    map.on('click', 'faces-layer', showPopup);
 
                     map.on('mouseleave', 'faces-layer', () => {
                         map.getCanvas().style.cursor = '';
-                        // Do not automatically remove the popup so mobile users can tap the link!
                     });
                 }
             });
