@@ -167,7 +167,7 @@
                 complete: function (results) {
                     // Filter: only show extremely steep faces (gradient > 1.428, which is ~55 degrees).
                     // Note: max gradient in data is ~66° (gradient 2.22). 70° (gradient 2.74) would show no faces.
-                    const data = results.data.filter(d => d.peak && d.latitude && d.longitude && d.gradient > 1.428);
+                    const data = results.data.filter(d => d.peak && d.latitude && d.longitude && d.rank <= 50);
 
                     const features = data.map(d => ({
                         type: 'Feature',
