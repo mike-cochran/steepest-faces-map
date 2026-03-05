@@ -149,8 +149,8 @@
                     }
                 ]
             },
-            center: [75.5, 35.8],
-            zoom: 6.5,
+            center: [81, 31],
+            zoom: 5,
             pitch: 0,
             bearing: 0
         });
@@ -160,7 +160,7 @@
 
         map.on('load', () => {
             // Load and parse CSV Data
-            Papa.parse('karakoram_steepest_faces.csv', {
+            Papa.parse('himalaya_steepest_faces.csv', {
                 download: true,
                 header: true,
                 dynamicTyping: true,

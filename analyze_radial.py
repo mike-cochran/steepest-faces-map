@@ -10,12 +10,16 @@ import requests
 from rasterio.merge import merge
 
 # --- CONFIGURATION PARAMETERS ---
-SEARCH_BBOX = [73.5, 35.0, 77.5, 36.5]   # Bounding box for region [lon_min, lat_min, lon_max, lat_max]
+SEARCH_REGIONS = [
+    {'name': 'Karakoram', 'bbox': [73.5, 35.0, 77.5, 36.5]},
+    {'name': 'Nepal Himalaya', 'bbox': [80.0, 27.0, 88.5, 29.5]},
+]
 MIN_PEAK_ELEVATION_M = 6000              # Minimum elevation of peaks to fetch
 GEONAMES_USERNAME = 'mjcochran16'        # GeoNames API username (free account at geonames.org)
 NUM_DIRECTIONS = 8                       # Number of radial directions to check per peak (e.g. 8 = 45 deg apart)
 MAX_RADIUS_KM = 20                       # Maximum horizontal radial distance to search for a drop (km)
 MIN_DROP_M = 2000                        # Minimum required vertical drop elevation (meters)
+OUTPUT_CSV = 'himalaya_steepest_faces.csv'
 
 def download_file(url, local_path):
     if not os.path.exists(local_path):
@@ -149,130 +153,59 @@ def analyze_radial_profiles(src, arr, peak_name, start_lon, start_lat, num_direc
     
     return results
 
-def main():
-    catalog = pystac_client.Client.open(
-        "https://planetarycomputer.microsoft.com/api/stac/v1",
-        modifier=planetary_computer.sign_inplace,
-    )
-    
-    print("Searching for Copernicus DEM tiles for the defined region...")
-    search = catalog.search(
-        collections=["cop-dem-glo-30"],
-        bbox=SEARCH_BBOX,
-    )
-    items = list(search.items())
-    print(f"Found {len(items)} DEM tiles. Downloading...")
-    
-    os.makedirs("data", exist_ok=True)
-    
-    dem_files = []
-    for item in items:
-        url = item.assets["data"].href
-        local_path = f"data/{item.id}.tif"
-        download_file(url, local_path)
-        dem_files.append(local_path)
-        
-    merged_path = "data/karakoram_range_merged.tif"
-    if len(dem_files) > 1 and not os.path.exists(merged_path):
-        print("Merging DEM tiles... this may take a while for large areas.")
-        src_files_to_mosaic = []
-        for fp in dem_files:
-            try:
-                src = rasterio.open(fp)
-                src_files_to_mosaic.append(src)
-            except Exception as e:
-                print(f"Failed to open {fp}: {e}")
-
-        if src_files_to_mosaic:
-            mosaic, out_trans = merge(src_files_to_mosaic)
-            
-            out_meta = src_files_to_mosaic[0].meta.copy()
-            out_meta.update({"driver": "GTiff",
-                             "height": mosaic.shape[1],
-                             "width": mosaic.shape[2],
-                             "transform": out_trans})
-
-            with rasterio.open(merged_path, "w", **out_meta) as dest:
-                dest.write(mosaic)
-                
-            for src in src_files_to_mosaic:
-                src.close()
-    elif len(dem_files) == 1:
-        merged_path = dem_files[0]
-        
-    # ========================================================
-    # Fetch peaks from MULTIPLE sources for best coverage
-    # ========================================================
+def fetch_peaks_for_bbox(bbox):
+    """Fetch peaks from GeoNames + OSM for a single bounding box."""
     raw_peaks = []
     
-    # --- Source 1: GeoNames API ---
-    print(f"[Source 1/2] Fetching peaks >{MIN_PEAK_ELEVATION_M}m from GeoNames...")
+    # --- GeoNames ---
     geonames_base_url = "http://api.geonames.org/searchJSON"
-    feature_codes = ['PK', 'MT']  # PK = peak, MT = mountain
-    geonames_count = 0
-    
-    for fc in feature_codes:
+    for fc in ['PK', 'MT']:
         start_row = 0
-        max_rows = 1000
         while True:
             params = {
-                'featureCode': fc,
-                'north': SEARCH_BBOX[3],
-                'south': SEARCH_BBOX[1],
-                'east': SEARCH_BBOX[2],
-                'west': SEARCH_BBOX[0],
-                'maxRows': max_rows,
-                'startRow': start_row,
-                'username': GEONAMES_USERNAME,
-                'style': 'FULL'
+                'featureCode': fc, 'north': bbox[3], 'south': bbox[1],
+                'east': bbox[2], 'west': bbox[0],
+                'maxRows': 1000, 'startRow': start_row,
+                'username': GEONAMES_USERNAME, 'style': 'FULL'
             }
-            
             try:
                 response = requests.get(geonames_base_url, params=params, timeout=30)
                 response.raise_for_status()
                 data = response.json()
             except Exception as e:
-                print(f"  Warning: GeoNames request failed for featureCode={fc}: {e}")
+                print(f"    GeoNames warning ({fc}): {e}")
                 break
-            
-            geonames_results = data.get('geonames', [])
-            if not geonames_results:
+            results = data.get('geonames', [])
+            if not results:
                 break
-                
-            for entry in geonames_results:
+            for entry in results:
                 try:
                     ele_val = float(entry.get('elevation', 0) or entry.get('srtm3', 0) or 0)
                     if ele_val >= MIN_PEAK_ELEVATION_M:
-                        name = entry.get('name', 'Unnamed Peak')
-                        lat = float(entry.get('lat', 0))
-                        lon = float(entry.get('lng', 0))
-                        raw_peaks.append({'name': name, 'lon': lon, 'lat': lat, 'ele': ele_val, 'source': 'geonames'})
-                        geonames_count += 1
+                        raw_peaks.append({'name': entry.get('name', 'Unnamed Peak'),
+                                        'lon': float(entry['lng']), 'lat': float(entry['lat']),
+                                        'ele': ele_val, 'source': 'geonames'})
                 except (ValueError, TypeError):
                     pass
-            
-            total_results = data.get('totalResultsCount', 0)
-            start_row += max_rows
-            if start_row >= total_results:
+            total = data.get('totalResultsCount', 0)
+            start_row += 1000
+            if start_row >= total:
                 break
     
-    print(f"  GeoNames: found {geonames_count} peaks >{MIN_PEAK_ELEVATION_M}m")
+    gn_count = len(raw_peaks)
     
-    # --- Source 2: OpenStreetMap Overpass API ---
-    print(f"[Source 2/2] Fetching peaks >{MIN_PEAK_ELEVATION_M}m from OpenStreetMap...")
-    overpass_url = "http://overpass-api.de/api/interpreter"
+    # --- OSM Overpass ---
     overpass_query = f"""
-    [out:json][timeout:60];
-    node["natural"="peak"]({SEARCH_BBOX[1]},{SEARCH_BBOX[0]},{SEARCH_BBOX[3]},{SEARCH_BBOX[2]});
+    [out:json][timeout:90];
+    node["natural"="peak"]({bbox[1]},{bbox[0]},{bbox[3]},{bbox[2]});
     out body;
     """
     osm_count = 0
     try:
-        response = requests.post(overpass_url, data={'data': overpass_query}, timeout=60)
+        response = requests.post("http://overpass-api.de/api/interpreter",
+                                data={'data': overpass_query}, timeout=90)
         response.raise_for_status()
-        osm_data = response.json()
-        
-        for element in osm_data.get('elements', []):
+        for element in response.json().get('elements', []):
             tags = element.get('tags', {})
             ele_str = tags.get('ele', '')
             if ele_str:
@@ -280,16 +213,95 @@ def main():
                     ele_val = float(''.join(c for c in ele_str if c.isdigit() or c == '.'))
                     if ele_val >= MIN_PEAK_ELEVATION_M:
                         name = tags.get('name', tags.get('name:en', 'Unnamed Peak'))
-                        raw_peaks.append({'name': name, 'lon': element['lon'], 'lat': element['lat'], 'ele': ele_val, 'source': 'osm'})
+                        raw_peaks.append({'name': name, 'lon': element['lon'], 'lat': element['lat'],
+                                        'ele': ele_val, 'source': 'osm'})
                         osm_count += 1
                 except ValueError:
                     pass
     except Exception as e:
-        print(f"  Warning: OSM Overpass request failed: {e}")
-        print(f"  Continuing with GeoNames data only.")
+        print(f"    OSM warning: {e}")
     
-    print(f"  OSM: found {osm_count} peaks >{MIN_PEAK_ELEVATION_M}m")
-    print(f"  Combined raw total: {len(raw_peaks)} peaks (before dedup)")
+    print(f"    GeoNames: {gn_count}, OSM: {osm_count}, Total: {len(raw_peaks)}")
+    return raw_peaks
+
+def main():
+    from rasterio.vrt import WarpedVRT
+    
+    catalog = pystac_client.Client.open(
+        "https://planetarycomputer.microsoft.com/api/stac/v1",
+        modifier=planetary_computer.sign_inplace,
+    )
+    
+    os.makedirs("data", exist_ok=True)
+    
+    # Download DEM tiles for all regions
+    all_dem_files = []
+    for region in SEARCH_REGIONS:
+        print(f"\nSearching for DEM tiles for {region['name']}...")
+        search = catalog.search(
+            collections=["cop-dem-glo-30"],
+            bbox=region['bbox'],
+        )
+        items = list(search.items())
+        print(f"  Found {len(items)} tiles. Downloading...")
+        
+        for item in items:
+            url = item.assets["data"].href
+            local_path = f"data/{item.id}.tif"
+            download_file(url, local_path)
+            if local_path not in all_dem_files:
+                all_dem_files.append(local_path)
+    
+    print(f"\nTotal DEM tiles across all regions: {len(all_dem_files)}")
+    
+    # Create a VRT (virtual raster) instead of merging all tiles
+    vrt_path = "data/all_regions.vrt"
+    if not os.path.exists(vrt_path) or True:  # Always rebuild VRT
+        print("Building virtual raster (VRT) from all DEM tiles...")
+        from rasterio.merge import merge as rasterio_merge
+        import subprocess
+        # Use gdalbuildvrt if available, otherwise fall back to rasterio merge
+        try:
+            cmd = ['gdalbuildvrt', vrt_path] + all_dem_files
+            subprocess.run(cmd, check=True, capture_output=True)
+            print(f"  VRT created at {vrt_path}")
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            # gdalbuildvrt not available, fall back to rasterio merge
+            print("  gdalbuildvrt not found, falling back to rasterio merge...")
+            print("  This may use significant memory for large regions.")
+            vrt_path = None  # Signal to use direct merge
+    
+    # If VRT failed, merge tiles directly
+    if vrt_path is None or not os.path.exists(vrt_path):
+        merged_path = "data/merged_dem.tif"
+        if not os.path.exists(merged_path):
+            print("Merging DEM tiles (this may take a while)...")
+            src_files = []
+            for fp in all_dem_files:
+                try:
+                    src_files.append(rasterio.open(fp))
+                except Exception as e:
+                    print(f"  Failed to open {fp}: {e}")
+            if src_files:
+                mosaic, out_trans = merge(src_files)
+                out_meta = src_files[0].meta.copy()
+                out_meta.update({"driver": "GTiff", "height": mosaic.shape[1],
+                                "width": mosaic.shape[2], "transform": out_trans})
+                with rasterio.open(merged_path, "w", **out_meta) as dest:
+                    dest.write(mosaic)
+                for s in src_files:
+                    s.close()
+        vrt_path = merged_path
+    # ========================================================
+    # Fetch peaks from all regions using multiple sources
+    # ========================================================
+    raw_peaks = []
+    for region in SEARCH_REGIONS:
+        print(f"\nFetching peaks for {region['name']}...")
+        region_peaks = fetch_peaks_for_bbox(region['bbox'])
+        raw_peaks.extend(region_peaks)
+    
+    print(f"\nCombined raw total: {len(raw_peaks)} peaks (before dedup)")
                 
     raw_peaks.sort(key=lambda x: x['ele'], reverse=True)
     
@@ -309,14 +321,17 @@ def main():
     
     all_faces = []
     
-    if os.path.exists(merged_path):
-        print("Loading DEM cleanly into memory to analyze peaks quickly...")
-        with rasterio.open(merged_path) as src:
+    if os.path.exists(vrt_path):
+        print("Loading DEM into memory for analysis...")
+        with rasterio.open(vrt_path) as src:
             arr = src.read(1)
             arr = arr.astype(np.float32)
             arr[arr == src.nodata] = np.nan
             
-            for p in peaks:
+            total_peaks = len(peaks)
+            for i, p in enumerate(peaks):
+                safe_name = p['name'].encode('ascii', 'replace').decode('ascii')
+                print(f"  [{i+1}/{total_peaks}] Analyzing {safe_name}...")
                 faces = analyze_radial_profiles(
                     src,
                     arr,
@@ -329,7 +344,7 @@ def main():
                 )
                 all_faces.extend(faces)
     else:
-        print("Merged path doesn't exist, cannot analyze right now.")
+        print("DEM path doesn't exist, cannot analyze right now.")
     
     if not all_faces:
         print(f"No faces >{MIN_DROP_M}m drop found from these peaks.")
@@ -337,7 +352,7 @@ def main():
         
     all_faces.sort(key=lambda f: f['gradient'], reverse=True)
     
-    csv_file = "karakoram_steepest_faces.csv"
+    csv_file = OUTPUT_CSV
     print(f"\nExporting {len(all_faces)} results to {csv_file}...")
     with open(csv_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=[
@@ -365,7 +380,8 @@ def main():
             })
     print(f"Results successfully saved to {csv_file}")
     
-    print(f"\n--- TOP 10 STEEPEST FACES IN KARAKORAM ---")
+    region_names = ' + '.join(r['name'] for r in SEARCH_REGIONS)
+    print(f"\n--- TOP 10 STEEPEST FACES ({region_names}) ---")
     for i, f in enumerate(all_faces[:10]):
         print(f"Rank {i+1}: {f['peak']} facing {f['direction']}")
         print(f"  Gradient : {f['gradient']:.2f}")
