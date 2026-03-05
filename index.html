@@ -235,16 +235,13 @@
                         }
                     });
 
-                    function showPopup(e) {
-                        map.getCanvas().style.cursor = 'pointer';
-
-                        const feature = e.features[0];
+                    function showPopup(feature, lngLat) {
                         const coordinates = feature.geometry.coordinates.slice();
                         const obj = feature.properties;
 
                         // Ensure proper positioning on wrap-around
-                        while (Math.abs(e.lngLat.lng - coordinates[0]) > 180) {
-                            coordinates[0] += e.lngLat.lng > coordinates[0] ? 360 : -360;
+                        while (Math.abs(lngLat.lng - coordinates[0]) > 180) {
+                            coordinates[0] += lngLat.lng > coordinates[0] ? 360 : -360;
                         }
 
                         const mapsUrl = `https://www.google.com/maps/@${obj.latitude},${obj.longitude},8000m/data=!3m1!1e3?entry=ttu`;
@@ -264,10 +261,22 @@
                     }
 
                     // Desktop: show popup on hover
-                    map.on('mouseenter', 'faces-layer', showPopup);
+                    map.on('mouseenter', 'faces-layer', (e) => {
+                        map.getCanvas().style.cursor = 'pointer';
+                        showPopup(e.features[0], e.lngLat);
+                    });
 
-                    // Mobile: show popup on tap
-                    map.on('click', 'faces-layer', showPopup);
+                    // Mobile + Desktop: tap/click with generous hit area (20px radius)
+                    map.on('click', (e) => {
+                        const bbox = [
+                            [e.point.x - 20, e.point.y - 20],
+                            [e.point.x + 20, e.point.y + 20]
+                        ];
+                        const features = map.queryRenderedFeatures(bbox, { layers: ['faces-layer'] });
+                        if (features.length > 0) {
+                            showPopup(features[0], e.lngLat);
+                        }
+                    });
 
                     map.on('mouseleave', 'faces-layer', () => {
                         map.getCanvas().style.cursor = '';
