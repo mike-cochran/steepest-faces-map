@@ -17,7 +17,7 @@ SEARCH_REGIONS = [
 MIN_PEAK_ELEVATION_M = 6000              # Minimum elevation of peaks to fetch
 GEONAMES_USERNAME = 'mjcochran16'        # GeoNames API username (free account at geonames.org)
 NUM_DIRECTIONS = 8                       # Number of radial directions to check per peak (e.g. 8 = 45 deg apart)
-MAX_RADIUS_KM = 20                       # Maximum horizontal radial distance to search for a drop (km)
+MAX_RADIUS_KM = 3                       # Maximum horizontal radial distance to search for a drop (km)
 MIN_DROP_M = 1000                        # Minimum required vertical drop elevation (meters)
 OUTPUT_CSV = 'himalaya_steepest_faces.csv'
 
